@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: alex-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    image: python:3.11-slim
+    container_name: alex-api
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@alex-postgres:5432/alex
+
+      # ===== Clerk Auth (DEV / LOCAL) =====
+      CLERK_JWKS_URL: "https://wired-chipmunk-9.clerk.accounts.dev/.well-known/jwks.json"
+      CLERK_ISSUER: "https://wired-chipmunk-9.clerk.accounts.dev"
+      CLERK_AUDIENCE: "local"
+      CLERK_PUBLISHABLE_KEY: "pk_test_d2lyZWQtY2hpcG11bmstOS5jbGVyay5hY2NvdW50cy5kZXYk"
+      CLERK_SECRET_KEY: "sk_test_i6UyAfPK1Th0Wo2VdsksoQ1ThgltoGDmIp63PmAjZO"
+
+      # ===== Embeddings =====
+      EMBEDDING_DIM: "1024"
+      EMBEDDINGS_MODEL: "text-embedding-3-large"
+      # OPENAI_API_KEY: "coloque_aqui_se_quiser"
+
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        pip install -r requirements.txt
+        python -m uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  pgdata:
