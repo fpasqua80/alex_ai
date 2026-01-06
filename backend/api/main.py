@@ -166,7 +166,7 @@ async def list_positions(account_id: str, clerk_user_id: str = Depends(get_curre
     if account.get("clerk_user_id") != clerk_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    positions = db.positions.list_by_account(clerk_user_id, account_id)
+    positions = db.positions.list_by_account(account_id)
     return {"positions": positions}
 
 @app.post("/api/positions")
