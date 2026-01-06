@@ -120,9 +120,32 @@ def _convert_sql(sql: str) -> str:
     return _PARAM_RE.sub(r"%(\1)s", sql)
 
 
-def _params_to_dict(params: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
-    if not params:
+def _params_to_dict(parameters: Any) -> Dict[str, Any]:
+    """Accept either:
+    - None
+    - dict like {"account_id": "..."}
+    - list like [{"name": "account_id", "value": "..."}]
+    """
+    if parameters is None:
         return {}
+
+    # If a models layer already passes a dict, accept it directly.
+    if isinstance(parameters, dict):
+        return dict(parameters)
+
+    # Legacy format: list of {name, value}
+    if isinstance(parameters, (list, tuple)):
+        out: Dict[str, Any] = {}
+        for p in parameters:
+            if not isinstance(p, dict):
+                raise TypeError(f"Invalid parameter entry type: {type(p)}; expected dict")
+            name = p.get("name")
+            if not name:
+                raise ValueError(f"Parameter missing 'name': {p}")
+            out[name] = p.get("value")
+        return out
+
+    raise TypeError(f"Invalid parameters type: {type(parameters)}; expected dict or list")
     out: Dict[str, Any] = {}
     for p in params:
         name = p.get("name")
