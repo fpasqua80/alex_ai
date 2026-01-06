@@ -160,21 +160,22 @@ class Accounts(BaseModel):
         return self.db.insert(self.table_name, data, returning="id")
 
 
-
-def delete_account(self, clerk_user_id: str, account_id: str) -> int:
-    """
-    Delete an account owned by the given clerk_user_id.
-    Returns affected rowcount (0 if not found or not owned by user).
-    """
-    where = "id = :id::uuid AND clerk_user_id = :clerk_user_id"
-    params = {
-        "id": str(account_id),
-        "clerk_user_id": str(clerk_user_id),
-    }
-    return self.db.delete(self.table_name, where, params)
 # =========================
 # POSITIONS
 # =========================
+
+
+    def delete_account(self, clerk_user_id: str, account_id: str) -> int:
+        """
+        Delete an account owned by the given clerk_user_id.
+        Returns affected rowcount (0 if not found or not owned by user).
+        """
+        where = "id = :id::uuid AND clerk_user_id = :clerk_user_id"
+        params = {
+            "id": str(account_id),
+            "clerk_user_id": str(clerk_user_id),
+        }
+        return self.db.delete(self.table_name, where, params)
 
 
 class Positions:
