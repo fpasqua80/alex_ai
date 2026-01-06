@@ -166,48 +166,80 @@ class Accounts(BaseModel):
 # POSITIONS
 # =========================
 
-class Positions(BaseModel):
-    table_name = "positions"
+class Positions:
+    def __init__(self, db):
+        self.db = db
 
-    def find_by_account(self, account_id: str) -> List[Dict]:
+    def find_by_id(self, clerk_user_id: str, position_id: str):
         sql = """
-            SELECT p.*, i.name AS instrument_name
-            FROM positions p
-            JOIN instruments i ON p.symbol = i.symbol
-            WHERE p.account_id = :account_id::uuid
-            ORDER BY p.symbol
-        """
-        params = [{"name": "account_id", "value": {"stringValue": account_id}}]
-        return self.db.query(sql, params)
-
-    def add_position(
-        self,
-        account_id: str,
-        symbol: str,
-        quantity: Decimal,
-    ) -> str:
-        sql = """
-            INSERT INTO positions (account_id, symbol, quantity, as_of_date)
-            VALUES (:account_id::uuid, :symbol, :quantity::numeric, :as_of_date::date)
-            ON CONFLICT (account_id, symbol)
-            DO UPDATE SET
-                quantity = EXCLUDED.quantity,
-                as_of_date = EXCLUDED.as_of_date,
-                updated_at = NOW()
-            RETURNING id
+            SELECT *
+            FROM positions
+            WHERE clerk_user_id = :clerk_user_id
+              AND id = :position_id::uuid
+            LIMIT 1
         """
         params = [
-            {"name": "account_id", "value": {"stringValue": account_id}},
-            {"name": "symbol", "value": {"stringValue": symbol}},
-            {"name": "quantity", "value": {"stringValue": str(quantity)}},
-            {"name": "as_of_date", "value": {"stringValue": date.today().isoformat()}},
+            {"name": "clerk_user_id", "value": clerk_user_id},
+            {"name": "position_id", "value": position_id},
         ]
-        return self.db.query_one(sql, params)["id"]
+        return self.db.query_one(sql, params)
 
+    def add_position(self, clerk_user_id: str, account_id: str, symbol: str, quantity: float, as_of_date: str | None = None) -> str:
+        sql = """
+            INSERT INTO positions (
+                clerk_user_id,
+                account_id,
+                symbol,
+                quantity,
+                as_of_date
+            )
+            VALUES (
+                :clerk_user_id,
+                :account_id::uuid,
+                :symbol,
+                :quantity,
+                COALESCE(:as_of_date::date, CURRENT_DATE)
+            )
+            RETURNING id
+        """
 
-# =========================
-# JOBS
-# =========================
+        params = [
+            {"name": "clerk_user_id", "value": clerk_user_id},
+            {"name": "account_id", "value": account_id},
+            {"name": "symbol", "value": symbol},
+            {"name": "quantity", "value": quantity},
+            {"name": "as_of_date", "value": as_of_date},
+        ]
+
+        row = self.db.query_one(sql, params)
+        return row["id"] if row and "id" in row else None
+
+    def list_by_account(self, clerk_user_id: str, account_id: str):
+        sql = """
+            SELECT *
+            FROM positions
+            WHERE clerk_user_id = :clerk_user_id
+              AND account_id = :account_id::uuid
+            ORDER BY created_at DESC
+        """
+        params = [
+            {"name": "clerk_user_id", "value": clerk_user_id},
+            {"name": "account_id", "value": account_id},
+        ]
+        return self.db.query(sql, params)
+
+    def delete_position(self, clerk_user_id: str, position_id: str) -> bool:
+        sql = """
+            DELETE FROM positions
+            WHERE clerk_user_id = :clerk_user_id
+              AND id = :position_id::uuid
+        """
+        params = [
+            {"name": "clerk_user_id", "value": clerk_user_id},
+            {"name": "position_id", "value": position_id},
+        ]
+        self.db.execute(sql, params)
+        return True
 
 class Jobs(BaseModel):
     table_name = "jobs"

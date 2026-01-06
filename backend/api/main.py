@@ -151,23 +151,6 @@ async def create_account(account: AccountCreate, clerk_user_id: str = Depends(ge
     )
     return db.accounts.find_by_id(account_id)
 
-@app.get("/api/instruments")
-async def list_instruments(clerk_user_id: str = Depends(get_current_user_id)):
-    # clerk_user_id dependency forces auth/dev-user resolution, but instruments are global
-    return db.instruments.find_all()
-
-@app.get("/api/positions")
-async def list_all_positions(clerk_user_id: str = Depends(get_current_user_id)):
-    # Convenience endpoint for clients that don't want to loop accounts.
-    accounts = db.accounts.find_by_user(clerk_user_id)
-    all_positions = []
-    for acct in accounts:
-        acct_id = acct.get("id") or acct.get("account_id")
-        if not acct_id:
-            continue
-        all_positions.extend(db.positions.find_by_account(str(acct_id)))
-    return {"positions": all_positions}
-
 @app.get("/api/accounts/{account_id}/positions")
 async def list_positions(account_id: str, clerk_user_id: str = Depends(get_current_user_id)):
     account = db.accounts.find_by_id(account_id)
@@ -176,7 +159,7 @@ async def list_positions(account_id: str, clerk_user_id: str = Depends(get_curre
     if account.get("clerk_user_id") != clerk_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    positions = db.positions.find_by_account(account_id)
+    positions = db.positions.list_by_account(clerk_user_id, account_id)
     return {"positions": positions}
 
 @app.post("/api/positions")

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from backend.database.src.client import PostgresClient
 
-load_dotenv(override=True)
+load_dotenv(override=False)  # do not override existing env vars
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -18,9 +18,18 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 def _split_sql(sql: str):
     """
     Split a SQL file into executable statements.
-    Handles quotes, comments, dollar blocks, etc.
+
+    Handles:
+    - ; statement terminators (only when not inside quotes)
+    - single quotes: '...'
+    - double quotes: "..."
+    - dollar-quoted strings/functions: $$...$$ or $tag$...$tag$
+    - line comments: -- ...
+    - block comments: /* ... */
     """
-    sql = sql.replace("\ufeff", "")
+
+    sql = sql.replace("\ufeff", "")  # strip BOM if present
+
     statements = []
     buf = []
 
@@ -40,6 +49,7 @@ def _split_sql(sql: str):
     while i < n:
         ch = sql[i]
 
+        # Inside dollar-quoted block
         if dollar_delim is not None:
             if sql.startswith(dollar_delim, i):
                 buf.append(dollar_delim)
@@ -50,13 +60,19 @@ def _split_sql(sql: str):
             i += 1
             continue
 
+        # Inside single-quoted string
         if in_single:
             buf.append(ch)
-            if ch == "'" and not (i + 1 < n and sql[i + 1] == "'"):
+            if ch == "'":
+                if i + 1 < n and sql[i + 1] == "'":
+                    buf.append("'")
+                    i += 2
+                    continue
                 in_single = False
             i += 1
             continue
 
+        # Inside double-quoted string
         if in_double:
             buf.append(ch)
             if ch == '"':
@@ -64,12 +80,14 @@ def _split_sql(sql: str):
             i += 1
             continue
 
+        # Line comment
         if ch == "-" and i + 1 < n and sql[i + 1] == "-":
             i += 2
             while i < n and sql[i] not in "\r\n":
                 i += 1
             continue
 
+        # Block comment
         if ch == "/" and i + 1 < n and sql[i + 1] == "*":
             i += 2
             while i + 1 < n and not (sql[i] == "*" and sql[i + 1] == "/"):
@@ -77,18 +95,21 @@ def _split_sql(sql: str):
             i += 2
             continue
 
+        # Start single quote
         if ch == "'":
             in_single = True
             buf.append(ch)
             i += 1
             continue
 
+        # Start double quote
         if ch == '"':
             in_double = True
             buf.append(ch)
             i += 1
             continue
 
+        # Start dollar-quote
         if ch == "$":
             j = i + 1
             while j < n and sql[j] != "$" and (sql[j].isalnum() or sql[j] == "_"):
@@ -99,6 +120,7 @@ def _split_sql(sql: str):
                 i = j + 1
                 continue
 
+        # Statement terminator
         if ch == ";":
             flush()
             i += 1
@@ -128,15 +150,15 @@ def main():
         statements = _split_sql(sql)
 
         for i, stmt in enumerate(statements, start=1):
-            db.execute(stmt)
-            total += 1
+            try:
+                db.execute(stmt)
+                total += 1
+            except Exception:
+                print(f"FAILED on statement {i} in {mf.name}")
+                print(stmt[:500])
+                raise
 
     print(f"\nMigrations completed successfully. Executed {total} statements.")
-
-
-# ✅ WRAPPER IMPORTÁVEL (Render / FastAPI startup)
-def run_migrations():
-    return main()
 
 
 if __name__ == "__main__":

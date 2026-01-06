@@ -11,12 +11,51 @@ Usage:
 
 import os
 from pydantic import ValidationError
-from dotenv import load_dotenv
+from dotenv import find_dotenv, dotenv_values
+import io
+import sys
 
+def _configure_stdio_utf8() -> None:
+    # Avoid Windows cp1252 crashes when printing unicode.
+    for stream in (getattr(sys, 'stdout', None), getattr(sys, 'stderr', None)):
+        if stream is not None and hasattr(stream, 'reconfigure'):
+            try:
+                stream.reconfigure(encoding='utf-8', errors='replace')
+            except Exception:
+                pass
+
+def load_env_safe(override: bool = False) -> None:
+    """Load .env without crashing on non-UTF8 (common on Windows).
+
+    - Tries UTF-8 first, then Latin-1 fallback.
+    - Does NOT override existing environment variables unless override=True.
+    """
+    env_path = find_dotenv(usecwd=True)
+    if not env_path:
+        return
+    raw = None
+    try:
+        raw = open(env_path, 'rb').read()
+    except Exception:
+        return
+    for enc in ('utf-8', 'latin-1'):
+        try:
+            s = raw.decode(enc)
+            values = dotenv_values(stream=io.StringIO(s))
+            for k, v in values.items():
+                if v is None:
+                    continue
+                if override or k not in os.environ:
+                    os.environ[k] = v
+            return
+        except UnicodeDecodeError:
+            continue
+
+_configure_stdio_utf8()
 from backend.database.src import Database
 from backend.database.src.schemas import InstrumentCreate
 
-load_dotenv(override=True)
+load_env_safe(override=False)
 
 INSTRUMENTS = [
     # Core US Equity
@@ -354,12 +393,12 @@ def main():
     print("Seeding Instrument Data (Postgres)")
     print("=" * 48)
     verify_allocations()
-    print("ðŸ“Š Verifying allocation data...")
-    print("  âœ… All allocations valid!")
+    print("Verifying allocation data...")
+    print("  All allocations valid!")
 
     db = Database()  # uses DATABASE_URL
 
-    print("\nðŸ’¾ Inserting instruments...")
+    print("\nInserting instruments...")
     ok = 0
     for i, inst in enumerate(INSTRUMENTS, start=1):
         symbol = inst.get("symbol")
@@ -373,18 +412,18 @@ def main():
                 [{"name": "symbol", "value": {"stringValue": symbol}}]
             )
             if existing:
-                print(f"  [{i:02d}/{len(INSTRUMENTS)}] {symbol}: already exists âœ…")
+                print(f"  [{i:02d}/{len(INSTRUMENTS)}] {symbol}: already exists (skip)")
                 continue
 
             db.instruments.create(data)
             ok += 1
-            print(f"  [{i:02d}/{len(INSTRUMENTS)}] {symbol}: inserted âœ…")
+            print(f"  [{i:02d}/{len(INSTRUMENTS)}] {symbol}: inserted OK")
         except ValidationError as ve:
-            print(f"  [{i:02d}/{len(INSTRUMENTS)}] {symbol}: âŒ validation error: {ve}")
+            print(f"  [{i:02d}/{len(INSTRUMENTS)}] {symbol}: VALIDATION ERROR: {ve}")
         except Exception as e:
-            print(f"  [{i:02d}/{len(INSTRUMENTS)}] {symbol}: âŒ Error: {e}")
+            print(f"  [{i:02d}/{len(INSTRUMENTS)}] {symbol}: ERROR: {e}")
 
-    print(f"\nâœ… Done. Inserted {ok} new instruments.")
+    print(f"\nDone. Inserted {ok} new instruments.")
 
 
 if __name__ == "__main__":
