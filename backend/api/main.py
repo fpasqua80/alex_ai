@@ -11,7 +11,7 @@ import sys
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional, List
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,14 +20,12 @@ from dotenv import load_dotenv
 
 # ---------------------------
 # Make imports work from both:
-#   - repo root:     uvicorn backend.api.main:app  (or backend.main:app)
-#   - inside backend: uvicorn main:app
+#   - repo root:     uvicorn backend.api.main:app
+#   - inside backend: uvicorn api.main:app or main:app (depending on structure)
 # ---------------------------
 THIS_FILE = Path(__file__).resolve()
 
 # Try to guess repo root robustly:
-# If this file is /backend/api/main.py -> parents[2] is repo root
-# If this file is /backend/main.py     -> parents[1] is repo root
 REPO_ROOT_CANDIDATES = [
     THIS_FILE.parents[2] if len(THIS_FILE.parents) >= 3 else None,
     THIS_FILE.parents[1] if len(THIS_FILE.parents) >= 2 else None,
@@ -93,7 +91,7 @@ if not CLERK_JWKS_URL:
 # ---------------------------
 app = FastAPI(title="Alex Financial Advisor API", version="1.0.0")
 
-# Important: tolerate trailing slashes
+# Tolerate /api/x vs /api/x/
 app.router.redirect_slashes = True
 
 # ---------------------------
@@ -113,7 +111,7 @@ app.add_middleware(
 )
 
 # ---------------------------
-# Startup: run migrations (Render)
+# Startup: run migrations (optional)
 # ---------------------------
 @app.on_event("startup")
 def apply_db_migrations():
@@ -123,14 +121,12 @@ def apply_db_migrations():
         return
 
     try:
-        # Prefer repo-root import
         from backend.database.run_migrations import run_migrations  # type: ignore
 
         run_migrations()
         logger.info("Database migrations applied on startup")
         return
     except Exception:
-        # Fallback import (if running inside /backend)
         try:
             from database.run_migrations import run_migrations  # type: ignore
 
@@ -155,6 +151,10 @@ async def general_exception_handler(request: Request, exc: Exception):
 db = Database()
 
 
+def _pick_account_id(account: Dict[str, Any]) -> Optional[str]:
+    return account.get("id") or account.get("account_id") or account.get("uuid")
+
+
 # ---------------------------
 # Routes
 # ---------------------------
@@ -173,7 +173,7 @@ async def health():
     return {"status": "healthy", "time": datetime.utcnow().isoformat()}
 
 
-# ---- USER (with and without trailing slash)
+# ---- USER
 @app.get("/api/user")
 @app.get("/api/user/")
 async def get_or_create_user(clerk_user_id: str = Depends(get_current_user_id)):
@@ -186,7 +186,7 @@ async def get_or_create_user(clerk_user_id: str = Depends(get_current_user_id)):
     return {"user": user, "created": True}
 
 
-# ---- ACCOUNTS (GET/POST with and without trailing slash)
+# ---- ACCOUNTS
 @app.get("/api/accounts")
 @app.get("/api/accounts/")
 async def list_accounts(clerk_user_id: str = Depends(get_current_user_id)):
@@ -210,7 +210,32 @@ async def create_account(account: AccountCreate, clerk_user_id: str = Depends(ge
     return db.accounts.find_by_id(account_id)
 
 
-# ---- POSITIONS BY ACCOUNT (with and without trailing slash)
+# ---- INSTRUMENTS (needed by frontend dropdowns / validation)
+@app.get("/api/instruments")
+@app.get("/api/instruments/")
+async def list_instruments(clerk_user_id: str = Depends(get_current_user_id)):
+    """
+    Returns the instrument universe for autocomplete.
+    This endpoint is intentionally public for the authenticated user,
+    but it does not filter by user since instruments are global.
+    """
+    inst = getattr(db, "instruments", None)
+    if not inst:
+        return {"instruments": []}
+
+    # Try common method names safely
+    for method_name in ("list_all", "all", "find_all", "get_all"):
+        fn = getattr(inst, method_name, None)
+        if callable(fn):
+            items = fn()
+            return {"instruments": items}
+
+    # Last resort: if the instruments model exposes a db/query helper
+    # we avoid raw SQL guessing here to prevent breaking deployments.
+    raise HTTPException(status_code=501, detail="Instrument listing not implemented in instruments model")
+
+
+# ---- POSITIONS by ACCOUNT
 @app.get("/api/accounts/{account_id}/positions")
 @app.get("/api/accounts/{account_id}/positions/")
 async def list_positions(account_id: str, clerk_user_id: str = Depends(get_current_user_id)):
@@ -224,7 +249,7 @@ async def list_positions(account_id: str, clerk_user_id: str = Depends(get_curre
     return {"positions": positions}
 
 
-# ---- ADD POSITION (with and without trailing slash)
+# ---- ADD POSITION
 @app.post("/api/positions")
 @app.post("/api/positions/")
 async def add_position(position: PositionCreate, clerk_user_id: str = Depends(get_current_user_id)):
@@ -235,6 +260,7 @@ async def add_position(position: PositionCreate, clerk_user_id: str = Depends(ge
         raise HTTPException(status_code=403, detail="Not authorized")
 
     symbol = position.symbol.upper()
+
     inst = db.instruments.find_by_symbol(symbol)
     if not inst:
         raise HTTPException(status_code=404, detail=f"Instrument {symbol} not found")
