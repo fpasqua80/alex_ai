@@ -6,26 +6,22 @@ uvicorn[standard]==0.34.0
 psycopg2-binary==2.9.9
 sqlalchemy==2.0.36
 
-# --- Migrations / SQL ---
+# --- Env ---
 python-dotenv==1.0.1
 
 # --- HTTP / Utils ---
 requests==2.32.3
 
-# --- Embeddings / AI ---
-openai==1.58.1
-
 # --- Data / Parsing ---
 pydantic==2.10.3
 
-# --- Logging / Observability (safe default) ---
+# --- Logging / Observability ---
 structlog==24.4.0
 
+# --- Auth ---
 fastapi-clerk-auth==0.0.6
 
-python-dotenv==1.0.1
-
+# --- OpenAI / Agents ---
+# openai-agents requires openai >= 1.107.1 and < 2
 openai>=1.107.1,<2
 openai-agents[litellm]
-
-
