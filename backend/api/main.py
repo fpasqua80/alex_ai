@@ -10,55 +10,51 @@ import os
 import sys
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Optional, Dict, Any
+
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from dotenv import load_dotenv
 
 # ---------------------------
-# Make imports work from both:
-#   - repo root:    uvicorn backend.main:app
-#   - inside backend: uvicorn main:app
+# Make imports work
 # ---------------------------
 THIS_FILE = Path(__file__).resolve()
-REPO_ROOT = THIS_FILE.parents[1]  # .../alex_vcel
+REPO_ROOT = THIS_FILE.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# Load env
 load_dotenv(override=True)
 
-# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("alex-api")
 
 # ---------------------------
-# Import DB + Schemas (robust)
+# Import DB + Schemas
 # ---------------------------
 try:
-    # Preferred (repo root)
     from backend.database.src.models import Database
     from backend.database.src.schemas import AccountCreate, PositionCreate
 except Exception:
-    # Fallback (running inside /backend)
     from database.src.models import Database
     from database.src.schemas import AccountCreate, PositionCreate
 
 # ---------------------------
-# Optional Clerk auth (do not fail boot if missing)
+# Optional Clerk auth
 # ---------------------------
 CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL")
 
 if CLERK_JWKS_URL:
     try:
         from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer, HTTPAuthorizationCredentials
+
         clerk_config = ClerkConfig(jwks_url=CLERK_JWKS_URL)
         clerk_guard = ClerkHTTPBearer(clerk_config)
 
         async def get_current_user_id(
-            creds: "HTTPAuthorizationCredentials" = Depends(clerk_guard),
+            creds: HTTPAuthorizationCredentials = Depends(clerk_guard),
         ) -> str:
             user_id = creds.decoded.get("sub")
             if not user_id:
@@ -66,8 +62,7 @@ if CLERK_JWKS_URL:
             return user_id
 
     except Exception as e:
-        # If package missing or misconfigured, still allow boot in dev
-        logger.warning("Clerk auth disabled (fastapi_clerk_auth import failed): %s", e)
+        logger.warning("Clerk auth disabled: %s", e)
         CLERK_JWKS_URL = None
 
 if not CLERK_JWKS_URL:
@@ -84,7 +79,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+# ---------------------------
+# CORS
+# ---------------------------
+cors_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,https://spiritglacier-cwwuys.stormkit.dev",
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in cors_origins if o.strip()],
@@ -93,13 +95,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Better errors
+# ---------------------------
+# ✅ Startup: run migrations (Render)
+# ---------------------------
+@app.on_event("startup")
+def apply_db_migrations():
+    enabled = os.getenv("RUN_MIGRATIONS_ON_STARTUP", "true").lower() == "true"
+    if not enabled:
+        logger.info("RUN_MIGRATIONS_ON_STARTUP=false (skipping migrations)")
+        return
+
+    try:
+        from backend.database.run_migrations import run_migrations
+        run_migrations()
+        logger.info("Database migrations applied on startup")
+    except Exception:
+        logger.exception("Failed to apply database migrations on startup")
+
+# ---------------------------
+# Error handler
+# ---------------------------
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled error: %s", exc, exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
+# ---------------------------
 # DB
+# ---------------------------
 db = Database()
 
 # ---------------------------
@@ -119,14 +142,10 @@ async def health():
 
 @app.get("/api/user")
 async def get_or_create_user(clerk_user_id: str = Depends(get_current_user_id)):
-    """
-    Dev mode: uses DEV_USER_ID if Clerk not configured.
-    """
     user = db.users.find_by_clerk_id(clerk_user_id)
     if user:
         return {"user": user, "created": False}
 
-    # minimal create (users PK is clerk_user_id)
     db.users.create_user(clerk_user_id=clerk_user_id, display_name=clerk_user_id)
     user = db.users.find_by_clerk_id(clerk_user_id)
     return {"user": user, "created": True}
@@ -137,7 +156,6 @@ async def list_accounts(clerk_user_id: str = Depends(get_current_user_id)):
 
 @app.post("/api/accounts")
 async def create_account(account: AccountCreate, clerk_user_id: str = Depends(get_current_user_id)):
-    # ensure user exists
     user = db.users.find_by_clerk_id(clerk_user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
