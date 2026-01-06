@@ -230,7 +230,7 @@ def generate_projections(
     return projections
 
 
-# Tool removed - analysis is now saved directly in lambda_handler
+# Tool removed - analysis is now saved directly in handler
 
 
 def create_agent(
@@ -322,3 +322,27 @@ Provide your analysis in clear markdown format with specific numbers and actiona
 """
 
     return model, tools, task
+
+
+def run_retirement_analysis(
+    job_id: str,
+    portfolio_data: Dict[str, Any],
+    user_preferences: Dict[str, Any],
+    db=None,
+) -> Dict[str, Any]:
+    """
+    Convenience entrypoint for the API layer (no AWS Lambda).
+    Returns a JSON-serializable dict with the final retirement analysis.
+    """
+    try:
+        agent = create_agent(job_id=job_id, portfolio_data=portfolio_data, user_preferences=user_preferences, db=db)
+        # 'Runner.run' returns a result object; we normalize to dict.
+        result = Runner.run(agent, input="Generate the retirement analysis based on the provided context.")
+        # Runner result may expose .final_output or .output_text depending on version.
+        out = getattr(result, "final_output", None) or getattr(result, "output_text", None) or result
+        if isinstance(out, (dict, list)):
+            return {"job_id": job_id, "analysis": out}
+        return {"job_id": job_id, "analysis_text": str(out)}
+    except Exception as e:
+        logging.exception("Retirement analysis failed")
+        return {"job_id": job_id, "error": str(e)}

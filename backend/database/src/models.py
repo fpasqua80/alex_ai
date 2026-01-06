@@ -3,17 +3,12 @@ Database models and query builders
 """
 
 from typing import Dict, List, Optional, Any
-from datetime import datetime, date
+from datetime import datetime
 from decimal import Decimal
 
 from .client import PostgresClient
 from .schemas import (
     InstrumentCreate,
-    UserCreate,
-    AccountCreate,
-    PositionCreate,
-    JobCreate,
-    JobUpdate,
 )
 
 
@@ -72,6 +67,9 @@ class BaseModel:
 # =========================
 # USERS
 # =========================
+
+
+
 
 class Users(BaseModel):
     table_name = "users"
@@ -162,39 +160,58 @@ class Accounts(BaseModel):
         return self.db.insert(self.table_name, data, returning="id")
 
 
+
+def delete_account(self, clerk_user_id: str, account_id: str) -> int:
+    """
+    Delete an account owned by the given clerk_user_id.
+    Returns affected rowcount (0 if not found or not owned by user).
+    """
+    where = "id = :id::uuid AND clerk_user_id = :clerk_user_id"
+    params = {
+        "id": str(account_id),
+        "clerk_user_id": str(clerk_user_id),
+    }
+    return self.db.delete(self.table_name, where, params)
 # =========================
 # POSITIONS
 # =========================
 
+
 class Positions:
-    def __init__(self, db):
+    """
+    Positions are owned by an account (account_id).
+    Authorization is enforced at the API layer by checking that the account belongs to the
+    current clerk_user_id, so the positions table does not need a clerk_user_id column.
+    """
+
+    def __init__(self, db: PostgresClient):
         self.db = db
 
-    def find_by_id(self, clerk_user_id: str, position_id: str):
+    def find_by_id(self, position_id: str) -> Optional[Dict]:
         sql = """
             SELECT *
             FROM positions
-            WHERE clerk_user_id = :clerk_user_id
-              AND id = :position_id::uuid
+            WHERE id = :position_id::uuid
             LIMIT 1
         """
-        params = [
-            {"name": "clerk_user_id", "value": clerk_user_id},
-            {"name": "position_id", "value": position_id},
-        ]
+        params = [{"name": "position_id", "value": {"stringValue": str(position_id)}}]
         return self.db.query_one(sql, params)
 
-    def add_position(self, clerk_user_id: str, account_id: str, symbol: str, quantity: float, as_of_date: str | None = None) -> str:
+    def add_position(
+        self,
+        account_id: str,
+        symbol: str,
+        quantity: Any,
+        as_of_date: Optional[str] = None,
+    ) -> Optional[str]:
         sql = """
             INSERT INTO positions (
-                clerk_user_id,
                 account_id,
                 symbol,
                 quantity,
                 as_of_date
             )
             VALUES (
-                :clerk_user_id,
                 :account_id::uuid,
                 :symbol,
                 :quantity,
@@ -202,42 +219,31 @@ class Positions:
             )
             RETURNING id
         """
-
         params = [
-            {"name": "clerk_user_id", "value": clerk_user_id},
-            {"name": "account_id", "value": account_id},
-            {"name": "symbol", "value": symbol},
-            {"name": "quantity", "value": quantity},
-            {"name": "as_of_date", "value": as_of_date},
+            {"name": "account_id", "value": {"stringValue": str(account_id)}},
+            {"name": "symbol", "value": {"stringValue": str(symbol)}},
+            {"name": "quantity", "value": {"stringValue": str(quantity)}},
+            {"name": "as_of_date", "value": {"stringValue": str(as_of_date)} if as_of_date else {"isNull": True}},
         ]
-
         row = self.db.query_one(sql, params)
-        return row["id"] if row and "id" in row else None
+        return str(row["id"]) if row and "id" in row else None
 
-    def list_by_account(self, clerk_user_id: str, account_id: str):
+    def list_by_account(self, account_id: str) -> List[Dict]:
         sql = """
             SELECT *
             FROM positions
-            WHERE clerk_user_id = :clerk_user_id
-              AND account_id = :account_id::uuid
+            WHERE account_id = :account_id::uuid
             ORDER BY created_at DESC
         """
-        params = [
-            {"name": "clerk_user_id", "value": clerk_user_id},
-            {"name": "account_id", "value": account_id},
-        ]
+        params = [{"name": "account_id", "value": {"stringValue": str(account_id)}}]
         return self.db.query(sql, params)
 
-    def delete_position(self, clerk_user_id: str, position_id: str) -> bool:
+    def delete_position(self, position_id: str) -> bool:
         sql = """
             DELETE FROM positions
-            WHERE clerk_user_id = :clerk_user_id
-              AND id = :position_id::uuid
+            WHERE id = :position_id::uuid
         """
-        params = [
-            {"name": "clerk_user_id", "value": clerk_user_id},
-            {"name": "position_id", "value": position_id},
-        ]
+        params = [{"name": "position_id", "value": {"stringValue": str(position_id)}}]
         self.db.execute(sql, params)
         return True
 

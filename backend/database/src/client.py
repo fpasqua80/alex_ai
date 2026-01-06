@@ -121,17 +121,23 @@ def _convert_sql(sql: str) -> str:
 
 
 def _params_to_dict(parameters: Any) -> Dict[str, Any]:
-    """Accept either:
+    """
+    Accept either:
     - None
     - dict like {"account_id": "..."}
-    - list like [{"name": "account_id", "value": "..."}]
+    - list like [{"name": "account_id", "value": {"stringValue": "..."}}]
+
+    IMPORTANT:
+    - If parameters are passed in the legacy Aurora Data API style, we MUST convert the typed
+      {"stringValue": "..."} / {"longValue": ...} dicts into real Python scalars, otherwise
+      psycopg2 will raise: "can't adapt type 'dict'".
     """
     if parameters is None:
         return {}
 
-    # If a models layer already passes a dict, accept it directly.
+    # If a models layer already passes a dict, accept it directly but coerce values.
     if isinstance(parameters, dict):
-        return dict(parameters)
+        return {k: _coerce_outgoing(_value_from_data_api_param(v)) for k, v in parameters.items()}
 
     # Legacy format: list of {name, value}
     if isinstance(parameters, (list, tuple)):
@@ -142,16 +148,11 @@ def _params_to_dict(parameters: Any) -> Dict[str, Any]:
             name = p.get("name")
             if not name:
                 raise ValueError(f"Parameter missing 'name': {p}")
-            out[name] = p.get("value")
+            value = _value_from_data_api_param(p.get("value"))
+            out[name] = _coerce_outgoing(value)
         return out
 
     raise TypeError(f"Invalid parameters type: {type(parameters)}; expected dict or list")
-    out: Dict[str, Any] = {}
-    for p in params:
-        name = p.get("name")
-        value = _value_from_data_api_param(p.get("value"))
-        out[name] = _coerce_outgoing(value)
-    return out
 
 
 class PostgresClient:
@@ -224,6 +225,20 @@ class PostgresClient:
                     return ret
                 conn.commit()
                 return cur.rowcount
+
+def delete(self, table: str, where_sql: str, where_params: Dict[str, Any]) -> int:
+    """
+    Delete rows from a table using a WHERE clause written with :named params.
+    Returns affected rowcount.
+    """
+    where_sql2 = _convert_sql(where_sql)
+    sql = f"DELETE FROM {table} WHERE {where_sql2}"
+    params = {k: _coerce_outgoing(_value_from_data_api_param(v)) for k, v in where_params.items()}
+    with self._conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            conn.commit()
+            return cur.rowcount
 
     def update(self, table: str, data: Dict[str, Any], where_sql: str, where_params: Dict[str, Any]) -> int:
         set_parts = [f"{k} = %({k})s" for k in data.keys()]

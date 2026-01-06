@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import { useAuth } from "@clerk/nextjs";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import {
@@ -117,6 +118,31 @@ const COLORS = [
   "#F87171", // red
   "#94A3B8", // gray
 ];
+
+const mdComponents: Components = {
+  h1: ({ children }) => <h1 className="text-3xl font-bold mb-4 text-gray-900">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-2xl font-semibold mb-3 text-gray-800 mt-6">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-xl font-medium mb-2 text-gray-700 mt-4">{children}</h3>,
+  ul: ({ children }) => <ul className="list-disc ml-6 mb-4 space-y-1">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal ml-6 mb-4 space-y-1">{children}</ol>,
+  li: ({ children }) => <li className="text-gray-700">{children}</li>,
+  p: ({ children }) => <p className="mb-4 text-gray-700 leading-relaxed">{children}</p>,
+  table: ({ children }) => (
+    <div className="overflow-x-auto mb-6">
+      <table className="w-full border-collapse">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-gray-100">{children}</thead>,
+  th: ({ children }) => <th className="p-3 text-left font-semibold border border-gray-300">{children}</th>,
+  td: ({ children }) => <td className="p-3 border border-gray-300">{children}</td>,
+  strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-4 border-primary pl-4 my-4 italic text-gray-600">
+      {children}
+    </blockquote>
+  ),
+};
+
 
 // ✅ Safe formatter for Recharts Tooltip (handles number | string | undefined)
 const currencyFormatter = (value?: number | string) => {
