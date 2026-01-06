@@ -7,15 +7,12 @@ No emojis (Windows cp1252 safe).
 from __future__ import annotations
 
 import os
-import urllib.request
-import json
 import sys
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends, Request
-from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from dotenv import load_dotenv
@@ -87,37 +84,6 @@ app = FastAPI(
     version="1.0.0",
 )
 
-
-
-class ResearchTriggerRequest(BaseModel):
-    topic: str = "market_update"
-    symbol: Optional[str] = None
-
-class RetirementAnalyzeRequest(BaseModel):
-    account_id: str
-    years_until_retirement: int = 30
-    target_retirement_income: float = 80000
-    current_age: int = 40
-
-
-
-def _post_json(url: str, payload: dict, timeout: int = 60) -> dict:
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-        try:
-            parsed = json.loads(body) if body else None
-        except Exception:
-            parsed = body
-        return {"status": resp.status, "data": parsed}
-
-
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -165,6 +131,13 @@ async def get_or_create_user(clerk_user_id: str = Depends(get_current_user_id)):
     user = db.users.find_by_clerk_id(clerk_user_id)
     return {"user": user, "created": True}
 
+
+
+@app.get("/api/instruments")
+async def list_instruments():
+    """List all available instruments (public catalog)."""
+    return {"instruments": db.instruments.find_all()}
+
 @app.get("/api/accounts")
 async def list_accounts(clerk_user_id: str = Depends(get_current_user_id)):
     return db.accounts.find_by_user(clerk_user_id)
@@ -185,19 +158,6 @@ async def create_account(account: AccountCreate, clerk_user_id: str = Depends(ge
     )
     return db.accounts.find_by_id(account_id)
 
-
-@app.delete("/api/accounts/{account_id}")
-async def delete_account(account_id: str, clerk_user_id: str = Depends(get_current_user_id)):
-    account = db.accounts.find_by_id(account_id)
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
-    if account.get("clerk_user_id") != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    deleted = db.accounts.delete_account(clerk_user_id, account_id)
-    if deleted == 0:
-        raise HTTPException(status_code=404, detail="Account not found")
-    return {"deleted": True, "account_id": account_id}
 @app.get("/api/accounts/{account_id}/positions")
 async def list_positions(account_id: str, clerk_user_id: str = Depends(get_current_user_id)):
     account = db.accounts.find_by_id(account_id)
@@ -206,7 +166,7 @@ async def list_positions(account_id: str, clerk_user_id: str = Depends(get_curre
     if account.get("clerk_user_id") != clerk_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    positions = db.positions.list_by_account(account_id)
+    positions = db.positions.list_by_account(clerk_user_id, account_id)
     return {"positions": positions}
 
 @app.post("/api/positions")
@@ -222,60 +182,5 @@ async def add_position(position: PositionCreate, clerk_user_id: str = Depends(ge
     if not inst:
         raise HTTPException(status_code=404, detail=f"Instrument {symbol} not found")
 
-    position_id = db.positions.add_position(position.account_id, symbol, position.quantity, as_of_date=str(position.as_of_date) if getattr(position, 'as_of_date', None) else None)
+    position_id = db.positions.add_position(position.account_id, symbol, position.quantity)
     return db.positions.find_by_id(position_id)
-
-
-
-@app.post("/api/research/trigger")
-def trigger_research(req: ResearchTriggerRequest):
-    """Trigger the Researcher service (no AWS Lambda)."""
-    researcher_url = os.getenv("RESEARCHER_URL", "").strip()
-    if not researcher_url:
-        raise HTTPException(status_code=500, detail="RESEARCHER_URL is not set")
-
-    # Accept either base URL or full endpoint
-    url = researcher_url
-    if not url.endswith("/research") and not url.endswith("/research/auto"):
-        url = url.rstrip("/") + "/research/auto"
-
-    payload = {"topic": req.topic}
-    if req.symbol:
-        payload["symbol"] = req.symbol
-
-    try:
-        return _post_json(url, payload)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to trigger researcher: {e}")
-
-
-@app.post("/api/retirement/analyze")
-def analyze_retirement(req: RetirementAnalyzeRequest, clerk_user_id: str = Depends(get_current_user_id)):
-    """Run retirement analysis locally (no AWS Lambda)."""
-    # Validate account ownership
-    account = db.accounts.find_by_id(req.account_id)
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
-    if account.get("clerk_user_id") != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    # Load portfolio positions for the account
-    positions = db.positions.list_by_account(req.account_id)
-
-    # Build portfolio data expected by agent
-    portfolio_data = {"account": account, "positions": positions}
-
-    user_preferences = {
-        "years_until_retirement": req.years_until_retirement,
-        "target_income": req.target_retirement_income,
-        "current_age": req.current_age,
-    }
-
-    # Import local retirement agent
-    try:
-        from backend.retirement.agent import run_retirement_analysis  # when running as a module in repo root
-    except Exception:
-        from backend.retirement.agent import run_retirement_analysis  # fallback if you keep it under backend/
-
-    job_id = f"retirement_{req.account_id}"
-    return run_retirement_analysis(job_id, portfolio_data, user_preferences, db=db)
