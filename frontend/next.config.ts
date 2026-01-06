@@ -2,11 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  images: {
-    unoptimized: true
+
+  eslint: {
+    ignoreDuringBuilds: true,
   },
-  // Disable automatic trailing slash redirect for API routes
-  trailingSlash: false,
+
+  output: "export",
+  trailingSlash: true,
 };
 
 export default nextConfig;
